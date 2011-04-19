@@ -1,0 +1,37 @@
+CHEAP TOURIST, FAST TOURIST
+===========================
+
+A solution for the problem described here: http://puzzlenode.com/puzzles/3
+
+Files in the bundle
+-------------------
+tourist.rb - Main module including the core code for the program
+main.rb - This program reads the problem data from a file called 'input', calculates the results and write them in a file called 'output'
+tourist_test.rb - Tests for the Tourist module
+
+USAGE
+=====
+
+Resolving the problem
+---------------------
+
+You need to provide a file named 'input', with valid input data for the tourist problem. It should be placed in the folder where the provided source files are located.
+Run 'ruby main.rb', it will produce a file named 'output' with the results
+
+Running the tests
+-----------------
+
+You can run the test suite by running 'ruby tourist_test.rb'. 
+The tests were implemented with MiniTest, so you might have to install this gem: gem install minitest
+
+Tested on:
+--------- 
+
+ruby 1.8.7 (2010-01-10 patchlevel 249) [i486-linux]
+ruby 1.9.2p188 (2011-03-28 revision 31204) [i686-linux]
+
+-----------------------------
+
+Developed by Jorge Bejar, 2011
+twitter: jmbejar
+github: jmbejar
