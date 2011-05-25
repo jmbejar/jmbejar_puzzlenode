@@ -22,6 +22,10 @@ module CountingCards
       @suit.nil?
     end
 
+    def to_s
+      value.to_s + suit.to_s
+    end
+
     def ==(other)
       if self.unknown? || other.unknown?
         false
@@ -69,6 +73,16 @@ module CountingCards
       @player = words.shift.to_sym
       @actions = words.map { |w| Action.new(w) }
     end
+
+    def unknown_cards_count
+      @actions.count{ |a| a.card.unknown? }
+    end
+
+    def clone
+      moves = Moves.new "#{@player}"
+      moves.actions = @actions.map(&:clone)
+      moves
+    end
   end
 
   class GameTurn
@@ -79,13 +93,13 @@ module CountingCards
     attr_accessor :discard_pile
 
     def initialize
-      @players = Hash[ PLAYER_NAMES.map { |p| [p, Set.new] } ]
-      @discard_pile = Set.new
+      @players = Hash[ PLAYER_NAMES.map { |p| [p, []] } ]
+      @discard_pile = []
     end
 
     def clone
       turn = GameTurn.new
-      turn.discard_pile = @discard_pile.clone
+      turn.discard_pile = @discard_pile.map(&:clone)
       @players.each { |k,v| turn.players[k] = v.clone }
       turn
     end
@@ -93,16 +107,20 @@ module CountingCards
     def apply_moves(moves)
       # TODO after every move check if the card *is* still on someelse's hand
       moves.actions.each do |action|
+        raise "The card #{action.card} is in the discard pile, player #{moves.player}" if !action.card.unknown? && discard_pile.include?(action.card)
         case action.type
         when :pass
+          raise "The player #{moves.player} is trying to pass the card #{action.card} " unless action.card.unknown? || players[moves.player].include?(action.card)
           players[moves.player].delete(action.card)
         when :receive
-          players[moves.player].add(action.card)
+          raise "The sender player, #{action.partner}, has not the given card #{action.card}" unless action.card.unknown? || players[action.partner].include?(action.card)
+          players[moves.player] << action.card
         when :discard
-          discard_pile.add(action.card)
+          raise "The player #{moves.player} is trying to discard the card #{action.card}" unless players[moves.player].include?(action.card)
+          discard_pile << action.card
           players[moves.player].delete(action.card)
         when :draw
-          players[moves.player].add(action.card)
+          players[moves.player] << action.card
         end
       end
     end
@@ -117,33 +135,54 @@ require 'ruby-debug'
 game = []
 turn = GameTurn.new
 
-input_file = File.new("input.txt", "r")
+input_file = File.new("input2.txt", "r")
 first_move = true
 while line = input_file.gets do
   moves = Moves.new(line.chop)
   if moves.player == :Lil
     if first_move
       first_move = false
+      turn.apply_moves(moves)
+      game << turn.clone
     else
       # Read signals
-      debugger
+      signed_moves_set = []
       while (line = input_file.gets) && line =~ /^\* / do
-        signed_moves = Moves.new(line.chop.sub!('* ', 'Lil '))
-        moves.actions.each do |action|
-          action.card = signed_moves.actions.shift.card if action.card.unknown?
+        signed_moves_set << Moves.new(line.chop.sub!('* ', 'Lil '))
+      end
+
+      # Remove invalid signals
+      signed_moves_set.delete_if { |m| m.actions.count != moves.unknown_cards_count }
+
+      signed_moves_set.each do |signed|
+        turn_backup = turn.clone
+        moves_backup = moves.clone
+        begin
+          moves.actions.each do |action|
+            if action.card.unknown?
+              if action.type != signed.actions.first.type
+                raise "The action is not the expected ( #{action.type} but expected #{signed.actions.first.type} )"
+              elsif ((action.type == :receive || action.type == :pass) && action.partner != signed.actions.first.partner)
+                raise "The other player is not the correct ( #{action.partner} but expected #{signed.actions.first.partner} )"
+              end
+              action.card = signed.actions.shift.card
+            end
+          end
+          turn.apply_moves(moves)
+          game << turn.clone
+        rescue
+          puts $!
+        ensure
+          turn = turn_backup
+          moves = moves_backup
         end
       end
     end
-
-    # Now we can apply the move
-    turn.apply_moves(moves)
-
-    # Make a copy for keep record of the game story
-    game << turn.clone
   else
     turn.apply_moves(moves)
   end
 end
 
-debugger
-a = 'test'
+game.each do |turn|
+  puts turn.players[:Lil].map(&:to_s).join(" ")
+end
