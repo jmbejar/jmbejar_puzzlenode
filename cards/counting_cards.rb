@@ -132,8 +132,8 @@ include CountingCards
 require 'rubygems'
 require 'ruby-debug'
 
-game = []
-turn = GameTurn.new
+games = [[]]
+initial_turn = GameTurn.new
 
 input_file = File.new("input2.txt", "r")
 first_move = true
@@ -142,47 +142,72 @@ while line = input_file.gets do
   if moves.player == :Lil
     if first_move
       first_move = false
-      turn.apply_moves(moves)
-      game << turn.clone
+      initial_turn.apply_moves(moves)
+      games.first << initial_turn
     else
-      # Read signals
-      signed_moves_set = []
-      while (line = input_file.gets) && line =~ /^\* / do
-        signed_moves_set << Moves.new(line.chop.sub!('* ', 'Lil '))
-      end
+      new_games = []
+      games.each do |game|
+        turn = game.last
 
-      # Remove invalid signals
-      signed_moves_set.delete_if { |m| m.actions.count != moves.unknown_cards_count }
+        # Read signals
+        signed_moves_set = []
+        while (line = input_file.gets) && line =~ /^\* / do
+          signed_moves_set << Moves.new(line.chop.sub!('* ', 'Lil '))
+        end
 
-      signed_moves_set.each do |signed|
-        turn_backup = turn.clone
-        moves_backup = moves.clone
-        begin
-          moves.actions.each do |action|
-            if action.card.unknown?
-              if action.type != signed.actions.first.type
-                raise "The action is not the expected ( #{action.type} but expected #{signed.actions.first.type} )"
-              elsif ((action.type == :receive || action.type == :pass) && action.partner != signed.actions.first.partner)
-                raise "The other player is not the correct ( #{action.partner} but expected #{signed.actions.first.partner} )"
+        # Remove invalid signals
+        signed_moves_set.delete_if { |m| m.actions.count != moves.unknown_cards_count }
+
+        success = 0
+        signed_moves_set.each do |signed|
+          turn_backup = turn.clone
+          moves_backup = moves.clone
+          begin
+            moves.actions.each do |action|
+              if action.card.unknown?
+                if action.type != signed.actions.first.type
+                  raise "The action is not the expected ( #{action.type} but expected #{signed.actions.first.type} )"
+                elsif ((action.type == :receive || action.type == :pass) && action.partner != signed.actions.first.partner)
+                  raise "The other player is not the correct ( #{action.partner} but expected #{signed.actions.first.partner} )"
+                end
+                action.card = signed.actions.shift.card
               end
-              action.card = signed.actions.shift.card
             end
+            turn.apply_moves(moves)
+            success = success.succ
+            if success == 1
+              game << turn.clone
+            else
+              new_game = game.map(&:clone)
+              new_game.pop
+              new_game << turn.clone
+              new_games << new_game
+            end
+          rescue
+            puts $!
+          ensure
+            turn = turn_backup
+            moves = moves_backup
           end
-          turn.apply_moves(moves)
-          game << turn.clone
-        rescue
-          puts $!
-        ensure
-          turn = turn_backup
-          moves = moves_backup
         end
       end
+      games = games + new_games
     end
   else
-    turn.apply_moves(moves)
+    if first_move
+      initial_turn.apply_moves(moves)
+    else
+      games.each do |game|
+        game.last.apply_moves(moves)
+      end
+    end
   end
 end
 
-game.each do |turn|
-  puts turn.players[:Lil].map(&:to_s).join(" ")
+games.each do |game|
+  puts ">>>>>>>>>>>"
+  game.each do |turn|
+    puts turn.players[:Lil].map(&:to_s).join(" ")
+  end
 end
+
