@@ -2,9 +2,6 @@ module CountingCards
   require 'set'
   class Card
 
-    CARD_VALUES = (2..9).map(&:to_s).map(&:to_sym) + [:J, :Q, :K, :A]
-    CARD_SUIT = [:C, :D, :S, :H]
-
     attr_reader :value
     attr_reader :suit
 
@@ -92,15 +89,19 @@ module CountingCards
     attr_accessor :players
     attr_accessor :discard_pile
 
+    attr_accessor :passes
+
     def initialize
       @players = Hash[ PLAYER_NAMES.map { |p| [p, []] } ]
       @discard_pile = []
+      @passes = []
     end
 
     def clone
       turn = GameTurn.new
       turn.discard_pile = @discard_pile.map(&:clone)
       @players.each { |k,v| turn.players[k] = v.clone }
+      @passes.each { |a| turn.passes << [a[0], a[1], a[2].clone]}
       turn
     end
 
@@ -110,16 +111,23 @@ module CountingCards
         raise "The card #{action.card} is in the discard pile, player #{moves.player}" if !action.card.unknown? && discard_pile.include?(action.card)
         case action.type
         when :pass
-          raise "The player #{moves.player} is trying to pass the card #{action.card} " unless action.card.unknown? || players[moves.player].include?(action.card)
+          raise "The player #{moves.player} is trying to pass the card #{action.card} " unless action.card.unknown? || players[moves.player].count { |c| c.unknown? } > 0 || players[moves.player].include?(action.card)
+          raise "pass dsfdsf #{action.card}" if !action.card.unknown? && players.reject{ |k,v| k == moves.player }.values.flatten.include?(action.card)
+          @passes << [moves.player, action.partner, action.card]
           players[moves.player].delete(action.card)
         when :receive
-          raise "The sender player, #{action.partner}, has not the given card #{action.card}" unless action.card.unknown? || players[action.partner].include?(action.card)
+          raise "The sender player, #{action.partner}, has not the given card #{action.card}" unless action.card.unknown? || players[action.partner].count { |c| c.unknown? } > 0 || players[action.partner].include?(action.card) || @passes.include?([action.partner, moves.player, action.card])
+          raise "receive dsfdsf #{action.card}" if !action.card.unknown? && players.reject{ |k,v| k == action.partner }.values.flatten.include?(action.card)
           players[moves.player] << action.card
+          @passes.delete([action.partner, moves.player, action.card])
+          #players[action.partner].delete(action.card)
         when :discard
-          raise "The player #{moves.player} is trying to discard the card #{action.card}" unless players[moves.player].include?(action.card)
+          raise "The player #{moves.player} is trying to discard the card #{action.card}" unless players[moves.player].count { |c| c.unknown? } > 0 || players[moves.player].include?(action.card)
           discard_pile << action.card
           players[moves.player].delete(action.card)
         when :draw
+          raise "The card drawn #{action.card} is already in the hand #{moves.player}" if !action.card.unknown? && players[moves.player].include?(action.card)
+          raise "asdsadas #{action.card}" if !action.card.unknown? && players.values.flatten.include?(action.card)
           players[moves.player] << action.card
         end
       end
@@ -132,34 +140,46 @@ include CountingCards
 require 'rubygems'
 require 'ruby-debug'
 
+def hhh
+  
+end
+
 games = [[]]
 initial_turn = GameTurn.new
 
-input_file = File.new("input2.txt", "r")
+input_file = File.new("input.txt", "r")
 first_move = true
-while line = input_file.gets do
+line = nil
+while line || line = input_file.gets do
+
+  #puts "::::::" + line
+
+  games_to_delete = []
   moves = Moves.new(line.chop)
   if moves.player == :Lil
     if first_move
       first_move = false
       initial_turn.apply_moves(moves)
       games.first << initial_turn
+      #games.first << initial_turn.clone
+      line = nil
     else
+      # Read signals
+      signed_moves_set = []
+      while (line = input_file.gets) && line =~ /^\* / do
+        puts "???????" + line
+        signed_moves_set << Moves.new(line.chop.sub!('* ', 'Lil '))
+      end
+
+      # Remove invalid signals
+      signed_moves_set.delete_if { |m| m.actions.count != moves.unknown_cards_count }
+
       new_games = []
       games.each do |game|
         turn = game.last
 
-        # Read signals
-        signed_moves_set = []
-        while (line = input_file.gets) && line =~ /^\* / do
-          signed_moves_set << Moves.new(line.chop.sub!('* ', 'Lil '))
-        end
-
-        # Remove invalid signals
-        signed_moves_set.delete_if { |m| m.actions.count != moves.unknown_cards_count }
-
         success = 0
-        signed_moves_set.each do |signed|
+        signed_moves_set.map(&:clone).each do |signed|
           turn_backup = turn.clone
           moves_backup = moves.clone
           begin
@@ -173,35 +193,45 @@ while line = input_file.gets do
                 action.card = signed.actions.shift.card
               end
             end
-            turn.apply_moves(moves)
+            turn_backup.apply_moves(moves)
             success = success.succ
             if success == 1
-              game << turn.clone
+              game << turn_backup
             else
               new_game = game.map(&:clone)
               new_game.pop
-              new_game << turn.clone
+              new_game << turn_backup
               new_games << new_game
             end
           rescue
-            puts $!
+            puts $!.to_s + " {{ #{moves.player} }}"
           ensure
-            turn = turn_backup
+            #turn = turn_backup
             moves = moves_backup
           end
         end
+        games_to_delete << game if success == 0
       end
       games = games + new_games
     end
+
   else
     if first_move
       initial_turn.apply_moves(moves)
     else
       games.each do |game|
-        game.last.apply_moves(moves)
+        begin
+          game.last.apply_moves(moves)
+        rescue
+          puts $!.to_s + " {{ #{moves.player} }}"
+          games_to_delete << game
+        end
       end
     end
+    line = nil
   end
+  # debugger unless games_to_delete.empty?
+  games = games - games_to_delete
 end
 
 games.each do |game|
@@ -210,4 +240,10 @@ games.each do |game|
     puts turn.players[:Lil].map(&:to_s).join(" ")
   end
 end
+
+output = File.open('output.txt', 'w')
+games.first.each do |turn|
+  output.puts turn.players[:Lil].map(&:to_s).join(" ")
+end
+output.close
 
