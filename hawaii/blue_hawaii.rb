@@ -30,17 +30,18 @@ module BlueHawaii
       @time = Time.local(Time.now.year, month, day)
     end
 
+    # Return the difference between SeasonDate in days
     def -(other)
       ((@time - other.time) / SECONDS_IN_A_DAY).to_i
     end
 
-    def +(days)
+    def next
       if last_day_of_year?
-        time = @time
+        SeasonDate.last_day_of_year
       else
-        time = @time + (days * SECONDS_IN_A_DAY)
+        time = @time + SECONDS_IN_A_DAY
+        SeasonDate.new(time.month, time.day)
       end
-      SeasonDate.new(time.month, time.day)
     end
 
     def <=>(other)
@@ -88,7 +89,7 @@ module BlueHawaii
 
     def reservation_cost(reservation)
       overlap_start = [@start, reservation.start].max
-      overlap_end   = [@end + 1, reservation.end].min
+      overlap_end   = [@end.next, reservation.end].min
 
       days = overlap_end - overlap_start
       days > 0 ? @rate * days : 0
@@ -140,7 +141,7 @@ module BlueHawaii
     private
 
     # Look for the season which contains the new year day and
-    # split in two different season (with the same rate)
+    # split in two different season (with the same rate price)
     def acommodate_seasons
       new_year_season = @seasons.select{|season| season.end < season.start}.first
 
