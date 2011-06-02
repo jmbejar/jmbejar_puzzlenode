@@ -4,81 +4,93 @@ require 'ruby-debug'
 
 module BlueHawaii
 
-  class SeasonDate < Time
-    def initialize(month, day)
-      super(Time.now.year, month, day)
-    end
+  # This class emulates Ruby Time class, but ignoring year
+  # because we are only interested in month & day calculations
+  class SeasonDate
 
-    def -(other_season_date)
-      (super(other_season_date) / (60.0 * 60.0 * 24.0)).to_i
-    end
+    SECONDS_IN_A_DAY = 60 * 60 * 24
 
-    def +(days)
-      time = super(days * 60.0 * 60.0 * 24.0)
-      SeasonDate.new(time.month, time.day)
-    end
-  end
+    attr_reader :time
 
-  class VacationRental
-    attr_accessor :name
-    attr_accessor :seasons
-    attr_accessor :cleaning_fee
+    class << self
+      def last_day_of_year
+        SeasonDate.new(12, 31)
+      end
 
-    def initialize(json)
-      @name = json['name']
-      @cleaning_fee = json['cleaning fee'].scan(/\d+/).first.to_f if json['cleaning fee']
+      def first_day_of_year
+        SeasonDate.new(1, 1)
+      end
 
-      if json['seasons']
-        @seasons = json['seasons'].map { |s| Season.new(s.values.first) }
-        if @seasons.count > 1
-          end_year_season = @seasons.select { |season| season.end < season.start }.first
-          first_seasion = Season.new(end_year_season.rate.to_s)
-          first_seasion.end = end_year_season.end
-          end_year_season.end = SeasonDate.new(12, 30)
-          @seasons.push(first_seasion)
-        end
-      else
-        @seasons = [ Season.new(json['rate']) ]
+      def new_from_json(string)
+        SeasonDate.new(*string.scan(/\d\d/))
       end
     end
 
-    def reservation_cost(reservation)
-      (@seasons.inject(0) { |cost, season| cost + season.reservation_cost(reservation) } + @cleaning_fee.to_f) * 1.0411416
+    def initialize(month, day)
+      @time = Time.local(Time.now.year, month, day)
+    end
+
+    def -(other)
+      ((@time - other.time) / SECONDS_IN_A_DAY).to_i
+    end
+
+    def +(days)
+      if last_day_of_year?
+        time = @time
+      else
+        time = @time + (days * SECONDS_IN_A_DAY)
+      end
+      SeasonDate.new(time.month, time.day)
+    end
+
+    def <=>(other)
+      @time <=> other.time
+    end
+
+    def method_missing(method, *args, &block)
+      local_args = args.map { |a| a.is_a?(SeasonDate) ? a.time : a }
+      return @time.send(method, *local_args, &block)
+    end
+
+    def respond_to?(symbol, include_private = false)
+      super(symbol, include_private) || @time.respond_to?(symbol, include_private)
+    end
+
+    private
+
+    def last_day_of_year?
+      self.time == SeasonDate.last_day_of_year.time
     end
   end
 
   class Season
     attr_accessor :start
     attr_accessor :end
-    attr_accessor :rate
+    attr_reader   :rate
 
-    def initialize(json_or_rate)
-      if json_or_rate.is_a?(Hash)
-        @start = SeasonDate.new(*(json_or_rate['start'].scan(/\d\d/)))
-        @end = SeasonDate.new(*(json_or_rate['end'].scan(/\d\d/)))
-        rate_str = json_or_rate['rate']
-      elsif json_or_rate.is_a?(String)
-        @start = SeasonDate.new(1, 1)
-        @end = SeasonDate.new(12, 30)
-        rate_str = json_or_rate
+    def initialize(input)
+      if input.is_a?(Hash)
+        @start   = SeasonDate.new_from_json(input['start'])
+        @end     = SeasonDate.new_from_json(input['end'])
+        rate_str = input['rate']
+      elsif input.is_a?(String)
+        @start   = SeasonDate.first_day_of_year
+        @end     = SeasonDate.last_day_of_year
+        rate_str = input
+      elsif input.is_a?(Season)
+        @start   = input.start
+        @end     = input.end
+        @rate    = input.rate
       end
-      @rate = rate_str.scan(/\d+/).first.to_i
+
+      @rate = rate_str.scan(/\d+/).first.to_i if rate_str
     end
 
     def reservation_cost(reservation)
-      #days = @end - @start
-      #days -= reservation.start - @start if @start < reservation.start
-      #days -= @end - reservation.end if reservation.end < @end
-      #days = 0 if days < 0
-      #puts daysy
-      #@rate * days
+      overlap_start = [@start, reservation.start].max
+      overlap_end   = [@end + 1, reservation.end].min
 
-      s = [@start, reservation.start].max
-      e = [@end + 1, reservation.end].min
-      days = e - s
-
-      puts "#{@start} #{@end} #{days}"
-
+      days = overlap_end - overlap_start
       days > 0 ? @rate * days : 0
     end
   end
@@ -88,18 +100,66 @@ module BlueHawaii
     attr_reader :end
 
     def initialize(string)
-      @start, @end = string.scan(/\d+\/\d+\/\d+/).map do |date|
+      @start, @end = string.scan(/[\d\/]+/).map do |date|
         year, month, day = date.scan(/\d+/)
         SeasonDate.new(month, day)
       end
     end
   end
 
+  class VacationRental
+
+    SALES_TAX = 1.0411416
+
+    attr_reader :name
+    attr_reader :seasons
+    attr_reader :cleaning_fee
+
+    def initialize(json)
+      @name = json['name']
+
+      if json['cleaning fee']
+        @cleaning_fee = json['cleaning fee'].scan(/\d+/).first.to_f
+      end
+
+      if json['seasons']
+        @seasons = json['seasons'].map {|s| Season.new(s.values.first)}
+        acommodate_seasons unless @seasons.empty?
+      else
+        @seasons = [ Season.new(json['rate']) ]
+      end
+    end
+
+    def reservation_cost(reservation)
+      partial_cost = @seasons.inject(0) do |cost, season|
+        cost + season.reservation_cost(reservation)
+      end
+      (partial_cost + @cleaning_fee.to_f) * SALES_TAX
+    end
+
+    private
+
+    # Look for the season which contains the new year day and
+    # split in two different season (with the same rate)
+    def acommodate_seasons
+      new_year_season = @seasons.select{|season| season.end < season.start}.first
+
+      first_seasion = Season.new(new_year_season)
+      new_year_season.end = SeasonDate.last_day_of_year
+
+      @seasons.push(first_seasion)
+    end
+  end
+
   class Hawaii
     attr_reader :vacation_rentals
     def initialize
-      vacation_rentals_file = File.new('vacation_rentals.json', 'r')
-      @vacation_rentals = JSON.parse(vacation_rentals_file.gets).map { |rental_json| VacationRental.new(rental_json) }
+      file  = File.new('vacation_rentals.json', 'r')
+      input = file.gets
+
+      @vacation_rentals = JSON.parse(input).map do |rental_json|
+        VacationRental.new(rental_json)
+      end
     end
   end
 end
